@@ -1,10 +1,6 @@
 import * as PIXI from 'pixi.js'
-import type Grid from './grid'
-
-interface LabelCell {
-  styles: PIXI.TextStyle
-  text: PIXI.BitmapText
-}
+import Grid from './grid'
+import type { Tracked } from './tracked'
 
 interface Stroke {
   color: number
@@ -22,57 +18,66 @@ interface RenderData {
   label: Label
 }
 
-type CellRenderer<D> = (cell: D) => RenderData
+export type CellRenderer<D> = (cell: D) => RenderData
+export type CellRenderTrigger<D> = { [K in keyof D]?: boolean }
 
 class Renderer<D extends Record<string, any>> {
   private grid: Grid<Tracked<D>>
   private width: number
   private height: number
-  private labelCells: LabelCell[][]
-  private container = new PIXI.Container()
-  private graphics = new PIXI.Graphics()
   private cellRenderer: CellRenderer<D>
+  private cellRenderTrigger: CellRenderTrigger<D>
+  private updateStack: Map<number, Map<number, boolean>> = new Map()
+  private container = new PIXI.Container()
+  private gridGraphics: Grid<PIXI.Graphics>
+  private labelCells: Grid<PIXI.BitmapText>
 
   constructor(
     grid: Grid<Tracked<D>>,
     width: number,
     height: number,
-    cellRenderer: CellRenderer<D>
+    cellRenderer: CellRenderer<D>,
+    cellRenderTrigger: CellRenderTrigger<D>
   ) {
     this.cellRenderer = cellRenderer
+    this.cellRenderTrigger = cellRenderTrigger
     this.grid = grid
     this.width = width
     this.height = height
-    this.labelCells = Array(height)
-      .fill(null)
-      .map((_, y) =>
-        Array(width)
-          .fill(null)
-          .map((_, x) => {
-            const style = new PIXI.TextStyle({
-              fontFamily: 'Arial',
-              fontSize: 10,
-              fill: 0xffffff,
-            })
-            const text = new PIXI.BitmapText()
-            text.style = style
-            return { styles: style, text: text }
-          })
-      )
-
-    this.container.addChild(this.graphics)
-    for (let y = 0; y < this.grid.getHeight(); y++) {
-      for (let x = 0; x < this.grid.getWidth(); x++) {
-        this.container.addChild(this.labelCells[y][x].text)
+    this.gridGraphics = new Grid<PIXI.Graphics>(
+      grid.getWidth(),
+      grid.getHeight(),
+      (x, y) => {
+        const graphics = new PIXI.Graphics()
+        this.container.addChild(graphics)
+        return graphics
       }
-    }
+    )
+    this.labelCells = new Grid<PIXI.BitmapText>(
+      grid.getWidth(),
+      grid.getHeight(),
+      (x, y) => {
+        const style = new PIXI.TextStyle({
+          fontSize: 10,
+          fill: 0xffffff,
+        })
+        const text = new PIXI.BitmapText()
+        text.style = style
+        this.container.addChild(text)
+        return text
+      }
+    )
   }
 
   renderCell(x: number, y: number, data: D) {
     const cellWidth = this.width / this.grid.getWidth()
     const cellHeight = this.height / this.grid.getHeight()
     const renderData = this.cellRenderer(data)
-    this.graphics
+    const graphics = this.gridGraphics.cell(x, y)
+    const labelCell = this.labelCells.cell(x, y)
+    if (graphics === null || labelCell === null) return
+    graphics
+      .clear()
       .rect(
         x * cellWidth + renderData.stroke.width,
         y * cellHeight + renderData.stroke.width,
@@ -88,14 +93,14 @@ class Renderer<D extends Record<string, any>> {
       })
 
     const label = renderData.label
-    this.labelCells[y][x].text.text = label.text
-    const labelHeight = this.labelCells[y][x].text.height
-    const labelWidth = this.labelCells[y][x].text.width
-    this.labelCells[y][x].styles.fill = label.color
-    this.labelCells[y][x].text.x =
-      x * cellWidth + cellWidth / 2 - labelWidth / 2
-    this.labelCells[y][x].text.y =
-      y * cellHeight + cellHeight / 2 - labelHeight / 2
+
+    const labelHeight = labelCell.height
+    const labelWidth = labelCell.width
+
+    labelCell.text = label.text
+    labelCell.style.fill = label.color
+    labelCell.x = x * cellWidth + cellWidth / 2 - labelWidth / 2
+    labelCell.y = y * cellHeight + cellHeight / 2 - labelHeight / 2
   }
 
   init(): void {
@@ -103,12 +108,31 @@ class Renderer<D extends Record<string, any>> {
       for (let x = 0; x < this.grid.getWidth(); x++) {
         const cell = this.grid.cell(x, y)
         if (cell === null) continue
-        cell.listener = (value: D) => {
-          this.renderCell(x, y, value)
+        cell.listener = (value, key) => {
+          if (this.cellRenderTrigger[key]) {
+            const xList = this.updateStack.get(x)
+            if (xList) {
+              xList.set(y, true)
+            } else {
+              this.updateStack.set(x, new Map([[y, true]]))
+            }
+          }
         }
         this.renderCell(x, y, cell.data)
       }
     }
+  }
+
+  update(): void {
+    this.updateStack.forEach((yList, x) => {
+      yList.forEach((_, y) => {
+        const cell = this.grid.cell(x, y)
+        if (cell === null) return
+        this.renderCell(x, y, cell.data)
+      })
+      yList.clear()
+    })
+    this.updateStack.clear()
   }
 
   get pixiContainer(): PIXI.Container {
@@ -117,28 +141,3 @@ class Renderer<D extends Record<string, any>> {
 }
 
 export default Renderer
-
-export class Tracked<D extends Record<string, any>> {
-  private _trackedData: D
-  private _listener: ((newValue: D) => void) | null = null
-
-  constructor(trackedData: D) {
-    this._trackedData = new Proxy(trackedData, {
-      set: (target: any, p, newValue) => {
-        target[p] = newValue
-        if (this._listener !== null) {
-          this._listener(trackedData)
-        }
-        return true
-      },
-    })
-  }
-
-  set listener(newListener: ((newValue: D) => void) | null) {
-    this._listener = newListener
-  }
-
-  get data(): D {
-    return this._trackedData
-  }
-}
