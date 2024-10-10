@@ -24,4 +24,8 @@ export class Tracked<D extends Record<string, any>> {
   get data(): D {
     return this._trackedData
   }
+
+  clone(): Tracked<D> {
+    return new Tracked(JSON.parse(JSON.stringify(this._trackedData)))
+  }
 }

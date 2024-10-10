@@ -18,15 +18,20 @@ interface RenderData {
   label: Label
 }
 
-export type CellRenderer<D> = (cell: D) => RenderData
-export type CellRenderTrigger<D> = { [K in keyof D]?: boolean }
+export type CellRenderer<T> = (cell: T) => RenderData
 
-class Renderer<D extends Record<string, any>> {
+export type CellRenderOptions<
+  D extends Record<string, any>,
+  T extends string
+> = {
+  cellRenderer: CellRenderer<{ [K in T]: D[K] }>
+  cellRenderTrigger: Record<T, boolean>
+}
+
+class Renderer<K extends string, D extends Record<K, any>> {
   private grid: Grid<Tracked<D>>
   private width: number
   private height: number
-  private cellRenderer: CellRenderer<D>
-  private cellRenderTrigger: CellRenderTrigger<D>
   private updateStack: Map<number, Map<number, boolean>> = new Map()
   private container = new PIXI.Container()
   private gridGraphics: Grid<PIXI.Graphics>
@@ -36,11 +41,8 @@ class Renderer<D extends Record<string, any>> {
     grid: Grid<Tracked<D>>,
     width: number,
     height: number,
-    cellRenderer: CellRenderer<D>,
-    cellRenderTrigger: CellRenderTrigger<D>
+    private cellRenderOptions: CellRenderOptions<D, K>
   ) {
-    this.cellRenderer = cellRenderer
-    this.cellRenderTrigger = cellRenderTrigger
     this.grid = grid
     this.width = width
     this.height = height
@@ -72,7 +74,7 @@ class Renderer<D extends Record<string, any>> {
   renderCell(x: number, y: number, data: D) {
     const cellWidth = this.width / this.grid.getWidth()
     const cellHeight = this.height / this.grid.getHeight()
-    const renderData = this.cellRenderer(data)
+    const renderData = this.cellRenderOptions.cellRenderer(data)
     const graphics = this.gridGraphics.cell(x, y)
     const labelCell = this.labelCells.cell(x, y)
     if (graphics === null || labelCell === null) return
@@ -109,7 +111,7 @@ class Renderer<D extends Record<string, any>> {
         const cell = this.grid.cell(x, y)
         if (cell === null) continue
         cell.listener = (value, key) => {
-          if (this.cellRenderTrigger[key]) {
+          if (Object.hasOwn(this.cellRenderOptions.cellRenderTrigger, key)) {
             const xList = this.updateStack.get(x)
             if (xList) {
               xList.set(y, true)
@@ -118,6 +120,12 @@ class Renderer<D extends Record<string, any>> {
             }
           }
         }
+      }
+    }
+    for (let y = 0; y < this.grid.getHeight(); y++) {
+      for (let x = 0; x < this.grid.getWidth(); x++) {
+        const cell = this.grid.cell(x, y)
+        if (cell === null) continue
         this.renderCell(x, y, cell.data)
       }
     }

@@ -2,8 +2,8 @@
   import { onMount } from 'svelte'
   import { MainEventDistributor } from './core/event'
   import * as PIXI from 'pixi.js'
-  import Renderer, { type CellRenderer } from './core/renderer'
-  import { grid, onCellEnter, type Data } from './logic'
+  import Renderer from './core/renderer'
+  import { grid, onCellEnter, tick } from './logic'
 
   let containerElement: HTMLDivElement
 
@@ -19,33 +19,32 @@
     containerElement.appendChild(app.canvas)
 
     const greenColor = 0x00ff00
-    // const blueColor = 0x0000ff
-    // const redColor = 0xff0000
     const whiteColor = 0xffffff
     const blackColor = 0x000000
-    const cellRenderer: CellRenderer<Data> = cell => {
-      const data = {
-        color: cell.levelSet >= 0 ? whiteColor : greenColor,
-        stroke: { color: cell.isLiquid ? blackColor : whiteColor, width: 1 },
-        label: { text: `${cell.levelSet.toFixed(1)}`, color: blackColor },
-      }
-      return data
-    }
 
-    const renderer = new Renderer(
-      grid,
-      app.screen.width,
-      app.screen.height,
-      cellRenderer,
-      { levelSet: true, isLiquid: true }
-    )
+    const renderer = new Renderer(grid, app.screen.width, app.screen.height, {
+      cellRenderer: cell => {
+        const data = {
+          color: cell.levelSet > 0 ? whiteColor : greenColor,
+          stroke: { color: cell.isLiquid ? blackColor : whiteColor, width: 1 },
+          label: { text: `${cell.levelSet.toFixed(1)}`, color: blackColor },
+        }
+        return data
+      },
+      cellRenderTrigger: { levelSet: true, isLiquid: true },
+    })
     app.stage.addChild(renderer.pixiContainer)
 
     const mainEventDistributor = new MainEventDistributor(grid, app.canvas)
     mainEventDistributor.addListener('CELL_ENTER', onCellEnter)
 
     renderer.init()
+    let lastTime = Date.now()
     app.ticker.add(() => {
+      const now = Date.now()
+      const delta = now - lastTime
+      lastTime = now
+      tick(delta)
       renderer.update()
     })
   })

@@ -39,6 +39,13 @@ class Grid<D> {
   getHeight(): number {
     return this.height
   }
+  loopOverCells(callback: (x: number, y: number) => void) {
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        callback(x, y)
+      }
+    }
+  }
 }
 
 export default Grid
